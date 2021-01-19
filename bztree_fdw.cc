@@ -342,10 +342,6 @@ bztreeBuildCallback(Relation index,
 static bztree::BzTree*
 BuildBzTree(Relation index)
 {
-	if (!index->rd_index->indisunique)
-	{
-		elog(ERROR, "Only unique BzTree index is currently supported");
-	}
 	BzTreeOptions* opts = (BzTreeOptions*)index->rd_options;
 	if (opts == NULL)
 		opts = makeDefaultBzTreeOptions();
@@ -410,30 +406,56 @@ bztree_build(Relation heap, Relation index, IndexInfo *indexInfo)
 	return result;
 }
 
+struct BzTreeCursor {
+	std::unique_ptr<bztree::Iterator> iterator;
+	StringInfoData key;
+
+	BzTreeCursor() {
+		initStringInfo(&key);
+	}
+	~BzTreeCursor() {
+		pfree(key.data);
+	}
+};
+
 
 static bool
 bztree_insert(Relation rel, Datum *values, bool *isnull,
-			ItemPointer ht_ctid, Relation heapRel,
-			IndexUniqueCheck checkUnique,
-			IndexInfo *indexInfo)
+			  ItemPointer ht_ctid, Relation heapRel,
+			  IndexUniqueCheck checkUnique,
+			  IndexInfo *indexInfo)
 {
-	Assert(checkUnique); // only unique indexes are supported
 	bztree::BzTree* tree = GetIndexPointer(rel);
-	StringInfoData key;
-	uint64_t payload;
-	initStringInfo(&key);
-	SerializeKey(&key, RelationGetDescr(rel), values, isnull);
-	payload = ((uint64_t)ItemPointerGetBlockNumber(ht_ctid) << 16) | ItemPointerGetOffsetNumber(ht_ctid);
-	auto rc = tree->Insert(key.data, key.len, payload);
-	pfree(key.data);
-	return rc.IsOk();
+	BzTreeCursor cursor;
+	SerializeKey(&cursor.key, RelationGetDescr(rel), values, isnull);
+#if 0
+	if (checkUnique == UNIQUE_CHECK_YES) {
+		auto iterator = tree->RangeScanBySize(cursor.key.data, cursor.key.len, BZTREE_SCAN_SIZE);
+		while (true) {
+			auto r = iterator->GetNext();
+			if (r && memcmp(r->GetKey(), cursor.key.data, cursor.key.len) == 0) {
+				// check visibility
+				return false;
+			} else {
+				break;
+			}
+		}
+	}
+#endif
+	appendBinaryStringInfo(&cursor.key, (char*)ht_ctid, sizeof(*ht_ctid));
+	auto payload = ((uint64_t)ItemPointerGetBlockNumber(ht_ctid) << 16) | ItemPointerGetOffsetNumber(ht_ctid);
+	auto rc = tree->Insert(cursor.key.data, cursor.key.len, payload);
+	if (!rc.IsOk()) {
+		elog(ERROR, "Failed to insert record in bztree index");
+	}
+	return true;
 }
 
 static IndexScanDesc
 bztree_beginscan(Relation rel, int nkeys, int norderbys)
 {
 	IndexScanDesc scan = RelationGetIndexScan(rel, nkeys, norderbys);
-	scan->opaque = NULL;
+	scan->opaque = new (palloc(sizeof(BzTreeCursor))) BzTreeCursor();
 	return scan;
 }
 
@@ -441,6 +463,7 @@ static void
 bztree_rescan(IndexScanDesc scan, ScanKey scankey, int nscankeys,
 			ScanKey orderbys, int norderbys)
 {
+	BzTreeCursor* cursor = (BzTreeCursor*)scan->opaque;
 	/* Update scan key, if a new one is given */
 	if (scankey && scan->numberOfKeys > 0)
 	{
@@ -448,22 +471,20 @@ bztree_rescan(IndexScanDesc scan, ScanKey scankey, int nscankeys,
 				scankey,
 				scan->numberOfKeys * sizeof(ScanKeyData));
 	}
-	scan->opaque = NULL;
+	cursor->iterator = NULL;
+	resetStringInfo(&cursor->key);
 }
 
 static bool
 bztree_gettuple(IndexScanDesc scan, ScanDirection dir)
 {
-	if (!scan->opaque)
+	BzTreeCursor* cursor = (BzTreeCursor*)scan->opaque;
+	if (!cursor->iterator)
 	{
-		StringInfoData key;
 		Relation index = scan->indexRelation;
 		TupleDesc tupDesc = RelationGetDescr(index);
 		bztree::BzTree* tree = GetIndexPointer(index);
-		uint64_t payload;
 
-		scan->opaque = tree;
-		initStringInfo(&key);
 		for (int i = 0; i < scan->numberOfKeys; i++)
 		{
 			ScanKey	sk = &scan->keyData[i];
@@ -471,15 +492,18 @@ bztree_gettuple(IndexScanDesc scan, ScanDirection dir)
 			SerializeAttribute(tupDesc,
 							   i,
 							   sk->sk_argument,
-							   &key);
+							   &cursor->key);
 		}
-		auto rc = tree->Read(key.data, key.len, &payload);
-		pfree(key.data);
-		if (rc.IsOk())
-		{
-			ItemPointerSet(&scan->xs_heaptid, payload >> 16, payload & 0xFFFF);
-			return true;
-		}
+		cursor->iterator = tree->RangeScanBySize(cursor->key.data, cursor->key.len, BZTREE_SCAN_SIZE);
+	}
+	auto r = cursor->iterator->GetNext();
+	if (!r) {
+		return false;
+	}
+	if (memcmp(r->GetKey(), cursor->key.data, cursor->key.len) == 0) {
+		auto payload = r->GetPayload();
+		ItemPointerSet(&scan->xs_heaptid, payload >> 16, payload & 0xFFFF);
+		return true;
 	}
 	return false;
 }
@@ -487,6 +511,9 @@ bztree_gettuple(IndexScanDesc scan, ScanDirection dir)
 static void
 bztree_endscan(IndexScanDesc scan)
 {
+	BzTreeCursor* cursor = (BzTreeCursor*)scan->opaque;
+	cursor->~BzTreeCursor();
+	pfree(cursor);
 }
 
 static IndexBulkDeleteResult *
@@ -596,7 +623,7 @@ bztree_handler(PG_FUNCTION_ARGS)
 	amroutine->amcanorder = false;
 	amroutine->amcanorderbyop = false;
 	amroutine->amcanbackward = false;
-	amroutine->amcanunique = true;
+	amroutine->amcanunique = false;
 	amroutine->amcanmulticol = true;
 	amroutine->amoptionalkey = false;
 	amroutine->amsearcharray = false;

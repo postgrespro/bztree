@@ -1,26 +1,64 @@
 create extension bztree;
-
 create table t(pk integer, val integer);
-
 create index on t using bztree(pk);
-
 insert into t values (generate_series(1,1000000),0);
-
 analyze t;
-
 select * from t where pk=1000;
+  pk  | val 
+------+-----
+ 1000 |   0
+(1 row)
+
 explain (COSTS OFF, TIMING OFF, SUMMARY OFF) select * from t where pk=1000;
+           QUERY PLAN           
+--------------------------------
+ Index Scan using t_pk_idx on t
+   Index Cond: (pk = 1000)
+(2 rows)
 
 update t set val=val+1 where pk=10;
 explain (COSTS OFF, TIMING OFF, SUMMARY OFF) update t set val=10 where pk=10;
+              QUERY PLAN              
+--------------------------------------
+ Update on t
+   ->  Index Scan using t_pk_idx on t
+         Index Cond: (pk = 10)
+(3 rows)
+
 select * from t where pk=10;
+ pk | val 
+----+-----
+ 10 |   1
+(1 row)
 
 delete from t where pk=100;
 select * from t where pk=100;
+ pk | val 
+----+-----
+(0 rows)
+
 vacuum t;
 select * from t where pk=10;
+ pk | val 
+----+-----
+ 10 |   1
+(1 row)
+
 select * from t where pk=99;
+ pk | val 
+----+-----
+ 99 |   0
+(1 row)
+
 select * from t where pk=100;
+ pk | val 
+----+-----
+(0 rows)
+
 select * from t where pk=101;
+ pk  | val 
+-----+-----
+ 101 |   0
+(1 row)
 
 drop table t;
