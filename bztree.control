@@ -1,0 +1,4 @@
+comment = 'bztree index'
+default_version = '1.0'
+module_pathname = '$libdir/bztree'
+relocatable = true
