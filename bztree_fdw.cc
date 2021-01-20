@@ -392,6 +392,7 @@ bztree_build(Relation heap, Relation index, IndexInfo *indexInfo)
 	IndexBuildResult *result;
 	BzTreeBuildContext ctx;
 	ctx.tree = BuildBzTree(index);
+	RelationOpenSmgr(index);
 	double reltuples = table_index_build_scan(heap, index, indexInfo, true, true,
 											  bztreeBuildCallback,
 											  (void *)&ctx, NULL);
