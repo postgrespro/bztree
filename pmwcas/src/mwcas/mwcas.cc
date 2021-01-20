@@ -18,7 +18,7 @@ DescriptorPartition::DescriptorPartition(EpochManager* epoch,
     DescriptorPool* pool)
     : desc_pool(pool), allocated_desc(0) {
   free_list = nullptr;
-  garbage_list = new GarbageListUnsafe;
+  garbage_list = new (ShmemAlloc(sizeof(GarbageListUnsafe))) GarbageListUnsafe();
   auto s = garbage_list->Initialize(epoch, pool->GetDescPerPartition());
   RAW_CHECK(s.ok(), "garbage list initialization failure");
 }

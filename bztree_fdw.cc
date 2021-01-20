@@ -56,6 +56,7 @@ PG_MODULE_MAGIC;
 
 #define BZTREE_SCAN_SIZE          (64*1024)
 #define BZTREE_HEIGHT_ESTIMATION  4
+#define BZTREE_SHMEM_SIZE         (1024*1024) /* shared memory for epoch manager, garbage collector e.t.c */
 
 static pmwcas::DescriptorPool* bztree_pool;
 
@@ -69,8 +70,6 @@ static LWLock* bztree_hash_lock;
 
 /* Kind of relation options for bztree index */
 static relopt_kind bztree_relopt_kind;
-
-static bool bztree_initialized;
 
 extern "C" void	_PG_init(void);
 extern "C" void	_PG_fini(void);
@@ -112,8 +111,24 @@ bztree_shmem_startup(void)
 	bztree_hash = ShmemInitHash("bztree hash",
 								bztree_max_indexes, bztree_max_indexes,
 								&info,
-							 HASH_ELEM | HASH_BLOBS);
+								HASH_ELEM | HASH_BLOBS);
 	bztree_hash_lock = &(GetNamedLWLockTranche("bztree"))->lock;
+#ifdef PMDK
+	pmwcas::InitLibrary(pmwcas::PMDKAllocator::Create("pool_bztree", "layout_bztree", bztree_mem_size),
+                        pmwcas::PMDKAllocator::Destroy,
+                        pmwcas::LinuxEnvironment::Create,
+                        pmwcas::LinuxEnvironment::Destroy);
+	auto allocator = reinterpret_cast<pmwcas::PMDKAllocator *>(pmwcas::Allocator::Get());
+	bztree::Allocator::Init(allocator);
+#else
+	pmwcas::InitLibrary(pmwcas::NumaAllocator::Create,
+						pmwcas::NumaAllocator::Destroy,
+						pmwcas::LinuxEnvironment::Create,
+						pmwcas::LinuxEnvironment::Destroy);
+	auto allocator = pmwcas::Allocator::Get();
+#endif
+	allocator->Allocate((void **) &bztree_pool, sizeof(pmwcas::DescriptorPool));
+	new(bztree_pool) pmwcas::DescriptorPool(bztree_descriptor_pool_size, MaxConnections, false);
 }
 
 void _PG_init(void)
@@ -125,7 +140,7 @@ void _PG_init(void)
                             "Size of memory for bztree indexes.",
 							NULL,
 							&bztree_mem_size,
-							4*1024*1024,
+							1024*1024,
 							1024*1024,
 							INT_MAX,
 							PGC_POSTMASTER,
@@ -177,32 +192,11 @@ void _PG_init(void)
 					  4096, 128, 64*1024,
 					  AccessExclusiveLock);
 
-	RequestAddinShmemSpace(hash_estimate_size(bztree_max_indexes, sizeof(BzTreeHashEntry)));
+	RequestAddinShmemSpace(hash_estimate_size(bztree_max_indexes, sizeof(BzTreeHashEntry)) + BZTREE_SHMEM_SIZE);
 	RequestNamedLWLockTranche("bztree", 1);
 
 	PreviousShmemStartupHook = shmem_startup_hook;
 	shmem_startup_hook = bztree_shmem_startup;
-
-	if (!bztree_initialized)
-	{
-		bztree_initialized = true;
-#ifdef PMDK
-		pmwcas::InitLibrary(pmwcas::PMDKAllocator::Create("pool_bztree", "layout_bztree", bztree_mem_size),
-                        pmwcas::PMDKAllocator::Destroy,
-                        pmwcas::LinuxEnvironment::Create,
-                        pmwcas::LinuxEnvironment::Destroy);
-		auto allocator = reinterpret_cast<pmwcas::PMDKAllocator *>(pmwcas::Allocator::Get());
-		bztree::Allocator::Init(allocator);
-#else
-		pmwcas::InitLibrary(pmwcas::NumaAllocator::Create,
-							pmwcas::NumaAllocator::Destroy,
-							pmwcas::LinuxEnvironment::Create,
-							pmwcas::LinuxEnvironment::Destroy);
-		auto allocator = pmwcas::Allocator::Get();
-	#endif
-		allocator->Allocate((void **) &bztree_pool, sizeof(pmwcas::DescriptorPool));
-		new(bztree_pool) pmwcas::DescriptorPool(bztree_descriptor_pool_size, MaxConnections, false);
-	}
 }
 
 void _PG_fini(void)
@@ -346,6 +340,7 @@ BuildBzTree(Relation index)
 	if (opts == NULL)
 		opts = makeDefaultBzTreeOptions();
 	bztree::BzTree* tree = bztree::BzTree::New(opts->param, bztree_pool);
+	tree->SetPMWCASPool(bztree_pool);
 	StoreIndexPointer(index, tree);
 	return tree;
 }

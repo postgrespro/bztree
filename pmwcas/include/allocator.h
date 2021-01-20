@@ -23,7 +23,9 @@ class IAllocator {
   virtual void FreeAligned(void* bytes) = 0;
   virtual uint64_t GetAllocatedSize(void* bytes) = 0;
   virtual Status Validate(void* bytes) = 0;
-  virtual ~IAllocator() {}  
+  virtual ~IAllocator() {}
 };
+
+extern "C" void *ShmemAlloc(size_t size);
 
 } // namespace pmwcas

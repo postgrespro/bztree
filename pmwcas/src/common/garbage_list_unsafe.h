@@ -99,9 +99,7 @@ class GarbageListUnsafe : public IGarbageList {
     }
 
     size_t nItemArraySize = sizeof(*items_) * item_count;
-    int rc = posix_memalign((void **)&items_, 64, nItemArraySize);
-    if (rc != 0 || !items_)
-      return Status::Corruption("Out of memory");
+    items_ = (Item*)ShmemAlloc(nItemArraySize);
 
     for(size_t i = 0; i < item_count; ++i) new(&items_[i]) Item{};
 

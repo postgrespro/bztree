@@ -30,7 +30,7 @@ EpochManager::~EpochManager() {
 Status EpochManager::Initialize() {
   if(epoch_table_) return Status::OK();
 
-  MinEpochTable* new_table = new MinEpochTable();
+  MinEpochTable* new_table = new (ShmemAlloc(sizeof(MinEpochTable))) MinEpochTable();
 
   if(new_table == nullptr) return Status::Corruption("Out of memory");
   RETURN_NOT_OK(new_table->Initialize());

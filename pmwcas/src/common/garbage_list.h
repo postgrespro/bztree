@@ -134,9 +134,7 @@ class GarbageList : public IGarbageList {
     }
 
     size_t nItemArraySize = sizeof(*items_) * item_count;
-    posix_memalign((void **)&items_, 64, nItemArraySize);
-    if (!items_)
-      return Status::Corruption("Out of memory");
+    items_ = (Item*)ShmemAlloc(nItemArraySize);
 
     for(size_t i = 0; i < item_count; ++i) new(&items_[i]) Item{};
 
@@ -171,8 +169,6 @@ class GarbageList : public IGarbageList {
         item.removal_epoch = 0;
       }
     }
-
-    free(items_);
 
     items_ = nullptr;
     tail_ = 0;

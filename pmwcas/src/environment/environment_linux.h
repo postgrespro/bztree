@@ -56,16 +56,14 @@ class LinuxEnvironment : public IEnvironment {
   virtual ~LinuxEnvironment() {}
 
   static Status Create(IEnvironment*& environment) {
-    int n = posix_memalign(reinterpret_cast<void**>(&environment), kCacheLineSize, sizeof(LinuxEnvironment));
-    if(!environment || n != 0) return Status::Corruption("Out of memory");
+	  environment = (IEnvironment*)ShmemAlloc(sizeof(LinuxEnvironment));
     new(environment)LinuxEnvironment();
     return Status::OK();
   }
 
   static void Destroy(IEnvironment* e) {
-    LinuxEnvironment* environment = static_cast<LinuxEnvironment*>(e);
-    environment->~LinuxEnvironment();
-    free(environment);
+	  //LinuxEnvironment* environment = static_cast<LinuxEnvironment*>(e);
+	  //environment->~LinuxEnvironment();
   }
 
 
@@ -234,7 +232,7 @@ class NumaAllocator : public pmwcas::IAllocator {
  public:
   NumaAllocator() {
     int nodes = numa_max_node() + 1;
-	int flags = MAP_ANONYMOUS | MAP_PRIVATE | MAP_POPULATE | MAP_HUGETLB;
+	int flags = MAP_ANONYMOUS | MAP_SHARED | MAP_POPULATE | MAP_HUGETLB;
 	kNumaMemorySize = (size_t)bztree_mem_size*1024/nodes;
     numa_segment = (NumaSegment*)mmap(
 		nullptr, sizeof(NumaSegment)*nodes, PROT_READ | PROT_WRITE,
