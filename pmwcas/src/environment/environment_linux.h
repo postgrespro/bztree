@@ -97,6 +97,10 @@ class LinuxEnvironment : public IEnvironment {
 
 
 extern "C" int bztree_mem_size;
+extern "C" int MyBackendId;
+extern "C" int MaxConnections;
+extern "C"	int my_log2(long num);
+
 
 /// NUMA oblivious allocotar for shared memory and multiprocess environment
 class NumaAllocator : public pmwcas::IAllocator {
@@ -119,11 +123,11 @@ class NumaAllocator : public pmwcas::IAllocator {
 
   // The hidden part of each allocated block of memory
   struct Header {
-    uint64_t size;
-    Header* next;
+	  uint64_t size;
+	  Header* next;
 	  char padding[kCacheLineSize - sizeof(size) - sizeof(next)];
-    Header() : size(0), next(nullptr) {}
-    inline void* GetData() { return (void*)((char*)this + sizeof(*this)); }
+	  Header() : size(0), next(nullptr) {}
+	  inline void* GetData() { return (void*)(this + 1); }
   };
 
   // Chain of all memory blocks of the same size
@@ -133,100 +137,81 @@ class NumaAllocator : public pmwcas::IAllocator {
     BlockList() : head(nullptr), tail(nullptr) {}
     BlockList(Header* h, Header* t) : head(h), tail(t) {}
 
-    inline void* Get() {
-      if(head) {
+    inline Header* Get() {
         Header* alloc = head;
-        if(alloc == tail) {
-          head = tail = nullptr;
-        } else {
-          head = head->next;
-        }
-        return alloc->GetData();
-      }
-      return nullptr;
+		if (!alloc) {
+			if (alloc == tail) {
+				head = tail = nullptr;
+			} else {
+				head = alloc->next;
+			}
+		}
+        return alloc;
     }
 
     inline void Put(Header* header) {
-      if(!head) {
-        DCHECK(!tail);
-        head = tail = header;
-      } else {
-        Header* old_tail = tail;
-        old_tail->next = header;
-        tail = header;
-        header->next = nullptr;
-      }
-      DCHECK(head->size == header->size);
+		if (!head) {
+			assert(!tail);
+			head = tail = header;
+		} else {
+			assert(head->size == header->size);
+			Header* old_tail = tail;
+			old_tail->next = header;
+			tail = header;
+		}
+		header->next = nullptr;
     }
   };
 
   inline Header* ExtractHeader(void* pBytes) {
-    return (Header*)((char*)pBytes - sizeof(Header));
-  }
-
-  inline std::unordered_map<size_t, BlockList>& GetNumaMap() {
-    static std::unordered_map<size_t, BlockList> tls_blocks;
-    return tls_blocks;
+    return (Header*)pBytes - 1;
   }
 
   struct Slab {
-    static const uint64_t kSlabSize = 1024 * 1024 * 1024;  // 1GB
-    NumaAllocator* tls_allocator;
-    uint64_t allocated;
-    void* memory;
+    static const uint64_t kSlabSize =  64 * 1024 * 1024;  // 64MB
+    uint64_t  allocated;
+    char*     memory;
+    BlockList lists[30];
+
     Slab() : allocated(0), memory(nullptr) {}
     ~Slab() {}
-    inline void* Allocate(size_t n) {
-    retry:
-      if(memory && allocated + n <= kSlabSize) {
-        uint64_t off = allocated;
-        allocated += n;
-        return (void*)((char*)memory + off);
-      } else {
-        // Slab full or not initialized yet
-        auto node = numa_node_of_cpu(sched_getcpu());
-        uint64_t off = __atomic_fetch_add(&tls_allocator->numa_segment[node].allocated, kSlabSize, __ATOMIC_SEQ_CST);
-        memory = tls_allocator->numa_segment[node].memory + off;
-        ALWAYS_ASSERT(off < tls_allocator->kNumaMemorySize);
-        allocated = 0;
-        goto retry;
-      }
-      DCHECK(false);
-      return nullptr;
+
+	inline void Free(Header* hdr) {
+		assert(hdr->size < sizeof(lists)/sizeof(*lists));
+		lists[hdr->size].Put(hdr);
+	}
+
+	  inline Header* Allocate(NumaAllocator* allocator, size_t n) {
+		size_t pow2 = my_log2(n + sizeof(Header));
+		assert(pow2 < sizeof(lists)/sizeof(*lists));
+		Header* hdr = lists[pow2].Get();
+		if (hdr == NULL) {
+			size_t blockSize = (size_t)1 << pow2;
+			assert(blockSize <= kSlabSize);
+			if (!memory || allocated + blockSize > kSlabSize) {
+				// Slab full or not initialized yet
+				auto node = numa_node_of_cpu(sched_getcpu());
+				size_t off = __atomic_fetch_add(&allocator->numa_segment[node].allocated, kSlabSize, __ATOMIC_SEQ_CST);
+				memory = allocator->numa_segment[node].memory + off;
+				ALWAYS_ASSERT(off + kSlabSize < allocator->kNumaMemorySize);
+				allocated = 0;
+			}
+			size_t off = allocated;
+			allocated += blockSize;
+			hdr = (Header*)(memory + off);
+			hdr->size = pow2;
+		} else {
+			assert(hdr->size == pow2);
+		}
+		return hdr;
     }
   };
 
+  Slab* backend_slabs;
+
   inline Slab& GetNumaSlab() {
-    static Slab slab;
-    if(!slab.tls_allocator) {
-      slab.tls_allocator = this;
-    }
-    return slab;
-  }
-
-  /// Try to get something from the TLS set
-  inline void* NumaAllocate(size_t nSize) {
-    // Align to cache line size
-    nSize = (nSize + sizeof(Header) + kCacheLineSize - 1) / kCacheLineSize * kCacheLineSize;
-    auto& tls_map = GetNumaMap();
-    auto block_list = tls_map.find(nSize - sizeof(Header));
-    void* pBytes = nullptr;
-    if(block_list != tls_map.end()) {
-      pBytes = block_list->second.Get();
-    }
-
-    if(!pBytes) {
-      // Nothing in the map, try my local memory
-      auto& tls_slab = GetNumaSlab();
-      pBytes = tls_slab.Allocate(nSize);
-      if(pBytes) {
-        ((Header*)pBytes)->size = nSize - sizeof(Header);
-        ((Header*)pBytes)->next = nullptr;
-        pBytes = (void*)((char*)pBytes + sizeof(Header));
-      }
-    }
-    DCHECK(pBytes);
-    return pBytes;
+	  assert(MyBackendId < MaxConnections);
+	  return backend_slabs[MyBackendId+1];
   }
 
  public:
@@ -234,6 +219,9 @@ class NumaAllocator : public pmwcas::IAllocator {
     int nodes = numa_max_node() + 1;
 	int flags = MAP_ANONYMOUS | MAP_SHARED | MAP_POPULATE | MAP_HUGETLB;
 	kNumaMemorySize = (size_t)bztree_mem_size*1024/nodes;
+	size_t slabs_size = (MaxConnections+1)*sizeof(Slab);
+	backend_slabs = (Slab*)ShmemAlloc(slabs_size);
+	memset(backend_slabs, 0, slabs_size);
     numa_segment = (NumaSegment*)mmap(
 		nullptr, sizeof(NumaSegment)*nodes, PROT_READ | PROT_WRITE,
 		flags, -1, 0);
@@ -255,8 +243,9 @@ class NumaAllocator : public pmwcas::IAllocator {
   }
 
   void Allocate(void **mem, size_t nSize) override {
-    *mem= NumaAllocate(nSize);
-    DCHECK(*mem);
+	  Header* hdr = GetNumaSlab().Allocate(this, nSize);
+	  *mem = hdr ? hdr->GetData() : nullptr;
+	  DCHECK(*mem);
   }
 
   void CAlloc(void **mem, size_t count, size_t size) override {
@@ -264,17 +253,8 @@ class NumaAllocator : public pmwcas::IAllocator {
   }
 
   void Free(void* pBytes) override {
-    auto& tls_map = GetNumaMap();
-    // Extract the hidden size info
-    Header* pHeader = ExtractHeader(pBytes);
-    pHeader->next = nullptr;
-    DCHECK(pHeader->size);
-    auto block_list = tls_map.find(pHeader->size);
-    if(block_list == tls_map.end()) {
-      tls_map.emplace(pHeader->size, BlockList(pHeader, pHeader));
-    } else {
-      block_list->second.Put(pHeader);
-    }
+	  Header* hdr = ExtractHeader(pBytes);
+	  GetNumaSlab().Free(hdr);
   }
 
   void AllocateAligned(void **mem, size_t nSize, uint32_t nAlignment) override {
@@ -312,75 +292,6 @@ class NumaAllocator : public pmwcas::IAllocator {
   }
 };
 
-
-// A simple wrapper for posix_memalign
-class DefaultAllocator : IAllocator {
- public:
-  DefaultAllocator() {}
-  ~DefaultAllocator() {}
-
-  static Status Create(IAllocator*& allocator) {
-    int n = posix_memalign(reinterpret_cast<void**>(&allocator), kCacheLineSize, sizeof(DefaultAllocator));
-    if(n || !allocator) return Status::Corruption("Out of memory");
-    new(allocator) DefaultAllocator();
-    return Status::OK();
-  }
-
-  static void Destroy(IAllocator* a) {
-    DefaultAllocator * allocator = static_cast<DefaultAllocator*>(a);
-    allocator->~DefaultAllocator();
-    free(allocator);
-  }
-
-  void Allocate(void **mem, size_t nSize) override {
-    int n RAW_CHECK_ONLY = posix_memalign(mem, kCacheLineSize, nSize);
-    RAW_CHECK(n == 0, "allocator error.");
-  }
-
-  void CAlloc(void **mem, size_t count, size_t size) override{
-    /// TODO(tzwang): not implemented yet
-    return;
-  }
-
-  void Free(void* pBytes) override {
-    free(pBytes);
-  }
-
-  void AllocateAligned(void **mem, size_t nSize, uint32_t nAlignment) override {
-    RAW_CHECK(nAlignment == kCacheLineSize, "unsupported alignment.");
-    return Allocate(mem, nSize);
-  }
-
-  void FreeAligned(void* pBytes) override {
-    return Free(pBytes);
-  }
-
-  void AllocateAlignedOffset(void **mem, size_t size, size_t alignment, size_t offset) override {
-    /// TODO(tzwang): not implemented yet
-    return;
-  }
-
-  void AllocateHuge(void **mem, size_t size) override {
-    /// TODO(tzwang): not implemented yet
-    return;
-  }
-
-  Status Validate(void* pBytes) override {
-    /// TODO(tzwang): not implemented yet
-    return Status::OK();
-  }
-
-  uint64_t GetAllocatedSize(void* pBytes) override {
-    /// TODO(tzwang): not implemented yet
-    return 0;
-  }
-
-  int64_t GetTotalAllocationCount() {
-    /// TODO(tzwang): not implemented yet
-    return 0;
-  }
-
-};
 
 #ifdef PMDK
 

@@ -63,7 +63,7 @@ DescriptorPool::DescriptorPool(
   desc_per_partition_ = pool_size_ / partition_count_;
   RAW_CHECK(desc_per_partition_ > 0, "descriptor per partition is 0");
 
-  partition_table_ = (DescriptorPartition*)malloc(sizeof(DescriptorPartition)*partition_count_);
+  partition_table_ = (DescriptorPartition*)ShmemAlloc(sizeof(DescriptorPartition)*partition_count_);
   RAW_CHECK(nullptr != partition_table_, "out of memory");
 
   for(uint32_t i = 0; i < partition_count_; ++i) {
@@ -99,7 +99,7 @@ void DescriptorPool::Recovery(bool enable_stats) {
   RAW_CHECK(s.ok(), "epoch initialization failure");
 
   RAW_CHECK(partition_count_ > 0, "invalid partition count");
-  partition_table_ = (DescriptorPartition *) malloc(sizeof(DescriptorPartition) * partition_count_);
+  partition_table_ = (DescriptorPartition *)ShmemAlloc(sizeof(DescriptorPartition) * partition_count_);
   RAW_CHECK(nullptr != partition_table_, "out of memory");
 
   for (uint32_t i = 0; i < partition_count_; ++i) {
@@ -264,8 +264,8 @@ DescriptorPool::~DescriptorPool() {
 extern "C" int MyBackendId;
 
 Descriptor* DescriptorPool::AllocateDescriptor(Descriptor::AllocateCallback ac,
-    Descriptor::FreeCallback fc) {
-  DescriptorPartition* tls_part = &partition_table_[MyBackendId & (partition_count_-1)];
+  Descriptor::FreeCallback fc) {
+  DescriptorPartition* tls_part = &partition_table_[(MyBackendId+1) & (partition_count_-1)];
   Descriptor* desc = tls_part->free_list;
   while(!desc) {
     // See if we can scavenge some descriptors from the garbage list
