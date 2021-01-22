@@ -440,8 +440,6 @@ bztree_insert(Relation rel, Datum *values, bool *isnull,
 #endif
 	appendBinaryStringInfo(&cursor.key, (char*)ht_ctid, sizeof(*ht_ctid));
 	auto payload = ((uint64_t)ItemPointerGetBlockNumber(ht_ctid) << 16) | ItemPointerGetOffsetNumber(ht_ctid);
-	elog(LOG, "Insert \\%02x\\%02x\\%02x\\%02x\\%02x\\%02x\\%02x\\%02x\\%02x\\%02x",
-		 cursor.key.data[0]&0xFF,cursor.key.data[1]&0xFF,cursor.key.data[2]&0xFF,cursor.key.data[3]&0xFF,cursor.key.data[4]&0xFF,cursor.key.data[5]&0xFF,cursor.key.data[6]&0xFF,cursor.key.data[7]&0xFF,cursor.key.data[8]&0xFF,cursor.key.data[9]&0xFF);
 	auto rc = tree->Insert(cursor.key.data, cursor.key.len, payload);
 	if (!rc.IsOk()) {
 		elog(ERROR, "Failed to insert record in bztree index");
