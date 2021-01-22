@@ -223,13 +223,20 @@ StoreIndexPointer(Relation index, bztree::BzTree* tree)
 static bztree::BzTree*
 GetIndexPointer(Relation index)
 {
-	bztree::BzTree* tree;
+	static bztree::BzTree* cached_tree;
+	static Oid cached_index_oid;
+
+	if (cached_index_oid == RelationGetRelid(index))
+		return cached_tree;
+
 	LWLockAcquire(bztree_hash_lock, LW_SHARED);
 	BzTreeHashEntry* entry = (BzTreeHashEntry*)hash_search(bztree_hash, &RelationGetRelid(index), HASH_FIND, NULL);
 	Assert(entry != NULL);
-	tree = entry->tree;
+	cached_tree = entry->tree;
 	LWLockRelease(bztree_hash_lock);
-	return tree;
+
+	cached_index_oid = RelationGetRelid(index);
+	return cached_tree;
 }
 
 static Datum
