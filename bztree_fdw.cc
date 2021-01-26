@@ -61,6 +61,7 @@ PG_MODULE_MAGIC;
 static pmwcas::DescriptorPool* bztree_pool;
 
 int bztree_mem_size;
+char* bztree_pool_name;
 int bztree_descriptor_pool_size;
 int bztree_max_indexes;
 
@@ -114,7 +115,7 @@ bztree_shmem_startup(void)
 								HASH_ELEM | HASH_BLOBS);
 	bztree_hash_lock = &(GetNamedLWLockTranche("bztree"))->lock;
 #ifdef PMDK
-	pmwcas::InitLibrary(pmwcas::PMDKAllocator::Create("pool_bztree", "layout_bztree", bztree_mem_size),
+	pmwcas::InitLibrary(pmwcas::PMDKAllocator::Create(bztree_pool_name, "layout_bztree", bztree_mem_size),
                         pmwcas::PMDKAllocator::Destroy,
                         pmwcas::LinuxEnvironment::Create,
                         pmwcas::LinuxEnvironment::Destroy);
@@ -135,6 +136,17 @@ void _PG_init(void)
 {
 	if (!process_shared_preload_libraries_in_progress)
 		elog(ERROR, "bztree extension should be loaded via shared_preload_libraries");
+
+	DefineCustomStringVariable("bztree.pool_name",
+							   "Path to obj memory pool file or the set file used to create a pool set (see .",
+							   NULL,
+							   &bztree_pool_name,
+							   "bztree_pool",
+							   PGC_POSTMASTER,
+							   0,
+							   NULL,
+							   NULL,
+							   NULL);
 
 	DefineCustomIntVariable("bztree.memory_size",
                             "Size of memory for bztree indexes.",
