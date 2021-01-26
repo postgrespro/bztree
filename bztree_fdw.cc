@@ -374,6 +374,7 @@ extern "C"
 	static bool bztree_insert(Relation rel, Datum *values, bool *isnull,
 							  ItemPointer ht_ctid, Relation heapRel,
 							  IndexUniqueCheck checkUnique,
+							  bool indexUnchanged,
 							  IndexInfo *indexInfo);
 	static IndexScanDesc bztree_beginscan(Relation rel, int nkeys, int norderbys);
 	static void bztree_rescan(IndexScanDesc scan, ScanKey scankey, int nscankeys,
@@ -438,6 +439,7 @@ static bool
 bztree_insert(Relation rel, Datum *values, bool *isnull,
 			  ItemPointer ht_ctid, Relation heapRel,
 			  IndexUniqueCheck checkUnique,
+			  bool indexUnchanged,
 			  IndexInfo *indexInfo)
 {
 	bztree::BzTree* tree = GetIndexPointer(rel);
