@@ -237,6 +237,7 @@ class NumaAllocator : public pmwcas::IAllocator {
       numa_segment[i].memory = (char *)mmap(
           nullptr, kNumaMemorySize, PROT_READ | PROT_WRITE,
           flags, -1, 0);
+	  madvise(numa_segment[i].memory, kNumaMemorySize, MADV_DONTDUMP);
 
       numa_segment[i].allocated = 0;
     }
