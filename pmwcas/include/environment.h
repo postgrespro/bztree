@@ -131,6 +131,8 @@ class RandomReadWriteAsyncFile : public File {
     RandomReadWriteAsyncFile* p);
 };
 
+extern "C" int MyBackendId;
+
 /// Interface for producing a shared memory segment on the target OS. Used for
 /// mapping memory segment to NVRAM or simulated NVRAM memory.
 class SharedMemorySegment {
@@ -172,11 +174,7 @@ class IEnvironment {
 
   /// Return the unique id of the caller thread.
   uint64_t GetThreadId() {
-#ifdef WIN32
-    return GetCurrentThreadId();
-#else
-    return pthread_self();
-#endif
+	  return MyBackendId;
   }
 
   /// Return the number of cores (plus hyperthreads, if enabled). Return value

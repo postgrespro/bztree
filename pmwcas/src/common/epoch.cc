@@ -246,7 +246,6 @@ Status EpochManager::MinEpochTable::Unprotect(Epoch currentEpoch) {
   Entry* entry = nullptr;
   RETURN_NOT_OK(GetEntryForThread(&entry));
 
-  DCHECK(entry->thread_id.load() == Environment::Get()->GetThreadId());
   entry->last_unprotected_epoch = currentEpoch;
   std::atomic_thread_fence(std::memory_order_release);
   entry->protected_epoch.store(0, std::memory_order_relaxed);
@@ -289,6 +288,8 @@ Epoch EpochManager::MinEpochTable::ComputeNewSafeToReclaimEpoch(
 
 // - private -
 
+extern "C" int MyBackendId;
+
 /**
 * Get a pointer to the thread-specific state needed for a thread to
 * Protect()/Unprotect(). If no thread-specific Entry has been allocated
@@ -306,74 +307,8 @@ Epoch EpochManager::MinEpochTable::ComputeNewSafeToReclaimEpoch(
 *      a non-serviceable state.
 */
 Status EpochManager::MinEpochTable::GetEntryForThread(Entry** entry) {
-  static Entry *tls = nullptr;
-  if(tls) {
-    *entry = tls;
-    return Status::OK();
-  }
-
-  // No entry index was found in TLS, so we need to reserve a new entry
-  // and record its index in TLS
-  Entry* reserved = ReserveEntryForThread();
-  tls = *entry = reserved;
-
-  return Status::OK();
-}
-
-uint32_t Murmur3(uint32_t h) {
-  h ^= h >> 16;
-  h *= 0x85ebca6b;
-  h ^= h >> 13;
-  h *= 0xc2b2ae35;
-  h ^= h >> 16;
-  return h;
-}
-
-extern "C" int MyBackendId;
-
-/**
-* Allocate a new Entry to track a thread's protected/unprotected status and
-* return a pointer to it. This should only be called once for a thread.
-*/
-EpochManager::MinEpochTable::Entry*
-EpochManager::MinEpochTable::ReserveEntryForThread() {
-  uint64_t current_thread_id = MyBackendId;
-  uint64_t startIndex = Murmur3_64(current_thread_id);
-  return ReserveEntry(startIndex, current_thread_id);
-}
-
-/**
-* Does the heavy lifting of reserveEntryForThread() and is really just
-* split out for easy unit testing. This method relies on the fact that no
-* thread will ever have ID on Windows 0.
-* http://msdn.microsoft.com/en-us/library/windows/desktop/ms686746(v=vs.85).aspx
-*/
-EpochManager::MinEpochTable::Entry*
-EpochManager::MinEpochTable::ReserveEntry(uint64_t start_index,
-    uint64_t thread_id) {
-  for(;;) {
-    // Reserve an entry in the table.
-    for(uint64_t i = 0; i < size_; ++i) {
-      uint64_t indexToTest = (start_index + i) & (size_ - 1);
-      Entry& entry = table_[indexToTest];
-	  if (entry.thread_id == thread_id)
-		  return &entry;
-      if(entry.thread_id == 0) {
-        uint64_t expected = 0;
-        // Atomically grab a slot. No memory barriers needed.
-        // Once the threadId is in place the slot is locked.
-        bool success =
-        entry.thread_id.compare_exchange_strong(expected,
-        thread_id, std::memory_order_relaxed);
-        if(success) {
-          return &table_[indexToTest];
-        }
-        // Ignore the CAS failure since the entry must be populated,
-        // just move on to the next entry.
-      }
-    }
-    ReclaimOldEntries();
-  }
+	*entry = &table_[MyBackendId];
+	return Status::OK();
 }
 
 bool EpochManager::MinEpochTable::IsProtected() {

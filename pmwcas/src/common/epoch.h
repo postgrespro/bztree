@@ -223,8 +223,6 @@ class EpochManager {
    public:
 
     Status GetEntryForThread(Entry** entry);
-    Entry* ReserveEntry(uint64_t startIndex, uint64_t threadId);
-    Entry* ReserveEntryForThread();
     void ReleaseEntryForThread();
     void ReclaimOldEntries();
     bool IsProtected();
