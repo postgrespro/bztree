@@ -356,6 +356,8 @@ EpochManager::MinEpochTable::ReserveEntry(uint64_t start_index,
     for(uint64_t i = 0; i < size_; ++i) {
       uint64_t indexToTest = (start_index + i) & (size_ - 1);
       Entry& entry = table_[indexToTest];
+	  if (entry.thread_id == thread_id)
+		  return &entry;
       if(entry.thread_id == 0) {
         uint64_t expected = 0;
         // Atomically grab a slot. No memory barriers needed.

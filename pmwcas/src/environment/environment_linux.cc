@@ -72,8 +72,10 @@ Status LinuxEnvironment::NewThreadPool(uint32_t max_threads,
 
 Status LinuxEnvironment::GetWorkingDirectory(std::string& directory) {
   char cwd[4096];
-  memset(cwd, 0, 4096);
-  getcwd(cwd, sizeof(cwd));
+  char *c = getcwd(cwd, sizeof(cwd));
+  if (c == NULL) {
+	  *cwd = '\0';
+  }
   directory = std::string(cwd);
   return Status::OK();
 }
