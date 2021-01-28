@@ -26,7 +26,6 @@ struct NVRAM {
 
   static void InitializeClflush() {
     use_clflush = true;
-    LOG(INFO) << "Will use CLFLUSH";
   }
 
   static void InitializeSpin(uint64_t delay_ns, bool emulate_wb) {
@@ -43,8 +42,6 @@ struct NVRAM {
       uint64_t end = __rdtsc();
       write_delay_cycles = (double)(end - start) / 1000000000 * delay_ns;
     }
-    LOG(INFO) << "Write delay: " << delay_ns << "ns (" <<
-        write_delay_cycles << " cycles)";
 
     if(emulate_wb) {
       char test_array[kCacheLineSize];
@@ -57,7 +54,6 @@ struct NVRAM {
       write_byte_per_cycle = 0;
     }
 
-    LOG(INFO) << "BW emulation: " << write_byte_per_cycle << " bytes per cycle";
   }
 
   static inline void Flush(uint64_t bytes, const void* data) {

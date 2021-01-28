@@ -136,7 +136,7 @@ void DescriptorPool::Recovery(bool enable_stats) {
       desc.assert_valid_status();
 #ifdef PMDK
       // Let's set the real addresses first
-      for (int w = 0; w < desc.count_; ++w) {
+      for (size_t w = 0; w < desc.count_; ++w) {
         auto &word = desc.words_[w];
         if((uint64_t)word.address_ == Descriptor::kAllocNullAddress) {
           continue;
@@ -152,7 +152,7 @@ void DescriptorPool::Recovery(bool enable_stats) {
       } else if (status == Descriptor::kStatusUndecided ||
           status == Descriptor::kStatusFailed) {
         in_progress_desc++;
-        for (int w = 0; w < desc.count_; ++w) {
+        for (size_t w = 0; w < desc.count_; ++w) {
           auto &word = desc.words_[w];
           if((uint64_t)word.address_ == Descriptor::kAllocNullAddress){
             continue;
@@ -173,15 +173,13 @@ void DescriptorPool::Recovery(bool enable_stats) {
             word.PersistAddress();
 #endif
             undo_words++;
-            LOG(INFO) << "Applied old value 0x" << std::hex
-                      << word.old_value_ << " at 0x" << word.address_;
           }
         }
       } else {
         RAW_CHECK(status == Descriptor::kStatusSucceeded, "invalid status");
         in_progress_desc++;
 
-        for (int w = 0; w < desc.count_; ++w) {
+        for (size_t w = 0; w < desc.count_; ++w) {
           auto &word = desc.words_[w];
 
           if((uint64_t)word.address_ == Descriptor::kAllocNullAddress){
@@ -199,17 +197,15 @@ void DescriptorPool::Recovery(bool enable_stats) {
             word.PersistAddress();
 #endif
             redo_words++;
-            LOG(INFO) << "Applied new value 0x" << std::hex
-                      << word.new_value_ << " at 0x" << word.address_;
           }
         }
       }
 
-      for (int w = 0; w < desc.count_; ++w) {
+      for (size_t w = 0; w < desc.count_; ++w) {
        if((uint64_t)desc.words_[w].address_ == Descriptor::kAllocNullAddress){
          continue;
        }
-       int64_t val = *desc.words_[w].address_;
+       int64_t val RAW_CHECK_ONLY = *desc.words_[w].address_;
 
         RAW_CHECK((val & ~Descriptor::kDirtyFlag) !=
             ((int64_t) &desc | Descriptor::kMwCASFlag),
@@ -219,10 +215,6 @@ void DescriptorPool::Recovery(bool enable_stats) {
                   "invalid word value");
       }
     }
-
-    LOG(INFO) << "Found " << in_progress_desc <<
-              " in-progress descriptors, rolled forward " << redo_words <<
-              " words, rolled back " << undo_words << " words";
   }
 #ifdef PMDK
   // Set the new pmdk_pool addr

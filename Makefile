@@ -14,8 +14,13 @@ OBJS = ./bztree_fdw.o \
 
 PGFILEDESC = "bztree - bztree implementation based on PMWCAS"
 
+ifdef USE_PMEM
+PG_CPPFLAGS += -std=c++14 -I./pmwcas -I./pmwcas/include -I./pmwcas/src -DPMDK -DPMEM
+SHLIB_LINK   = -lstdc++ -lnuma -lpmemobj
+else
 PG_CPPFLAGS += -std=c++14 -I./pmwcas -I./pmwcas/include -I./pmwcas/src
 SHLIB_LINK   = -lstdc++ -lnuma
+endif
 
 EXTENSION = bztree
 DATA = bztree--1.0.sql
