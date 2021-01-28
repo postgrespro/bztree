@@ -8,19 +8,29 @@
 #include <string>
 
 #ifdef GOOGLE_FRAMEWORK
+
 #include <glog/logging.h>
 #include <glog/raw_logging.h>
 #define RAW_CHECK_ONLY
+
 #else
+
 #define DCHECK(...) ;
-#define RAW_CHECK(...) ;
-#define CHECK_EQ(...) std::cout
 #define LOG_ASSERT(...) ;
+#define CHECK_EQ(...) std::cout
+
+#ifdef NDEBUG
+#define RAW_CHECK(_cond,_msg)
 #ifdef __GNUC__
 #define RAW_CHECK_ONLY __attribute__((unused))
 #else
 #define RAW_CHECK_ONLY
 #endif
+#else
+#define RAW_CHECK(_cond,_msg) assert(_cond)
+#define RAW_CHECK_ONLY
+#endif
+
 #endif
 
 namespace pmwcas {

@@ -51,12 +51,9 @@ DescriptorPool::DescriptorPool(
     pool_size_ *= 2;
   }
 
-  // Round partitions to a power of two but no higher than 1024
+  // Round partitions to a power of two
   partition_count_ = 1;
-  for(uint32_t exp = 1; exp < 10; exp++) {
-    if(requested_partition_count <= partition_count_) {
-      break;
-    }
+  while (requested_partition_count > partition_count_) {
     partition_count_ *= 2;
   }
   assert(partition_count_ > 1);
@@ -265,7 +262,8 @@ extern "C" int MyBackendId;
 
 Descriptor* DescriptorPool::AllocateDescriptor(Descriptor::AllocateCallback ac,
   Descriptor::FreeCallback fc) {
-  DescriptorPartition* tls_part = &partition_table_[(MyBackendId+1) & (partition_count_-1)];
+  assert((uint32_t)MyBackendId < partition_count_);
+  DescriptorPartition* tls_part = &partition_table_[MyBackendId];
   Descriptor* desc = tls_part->free_list;
   while(!desc) {
     // See if we can scavenge some descriptors from the garbage list

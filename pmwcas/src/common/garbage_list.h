@@ -260,7 +260,6 @@ class GarbageList : public IGarbageList {
   /// descriptor pool size vs. garbage list size, so there is this function.
   int32_t Scavenge() {
     const uint64_t invalid_epoch = ~0llu;
-    auto max_slot RAW_CHECK_ONLY = tail_.load(std::memory_order_relaxed);
     int32_t scavenged = 0;
 
     for(size_t slot = 0; slot < item_count_; ++slot) {

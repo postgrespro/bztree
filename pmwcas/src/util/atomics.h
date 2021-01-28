@@ -198,7 +198,8 @@ class Barrier {
   ~Barrier() {}
 
   void CountAndWait() {
-    uint64_t c RAW_CHECK_ONLY = --wait_count_;
+    assert(wait_count_ != 0);
+    wait_count_ -= 1;
     while(wait_count_ != 0) {}
   }
 
