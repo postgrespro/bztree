@@ -225,6 +225,7 @@ void _PG_fini(void)
 	pmwcas::UninitLibrary();
 }
 
+#ifndef PMDK
 //
 // Store pointer to BzTree in shared memory in reloptions column of pg_class
 //
@@ -236,6 +237,7 @@ StoreIndexPointer(Relation index, bztree::BzTree* tree)
 	entry->tree = tree;
 	LWLockRelease(bztree_hash_lock);
 }
+#endif
 
 //
 // Extract pointer to BzTree from reloptions column of pg_class
@@ -369,7 +371,7 @@ bztreeBuildCallback(Relation index,
 static bztree::BzTree*
 BuildBzTree(Relation index)
 {
-	bztree::BzTree* tree;
+	bztree::BzTree* bztree;
 	BzTreeOptions* opts = (BzTreeOptions*)index->rd_options;
 	if (opts == NULL)
 		opts = makeDefaultBzTreeOptions();
@@ -378,17 +380,17 @@ BuildBzTree(Relation index)
 	unlink(bztree_pool_name);
 	bztree_initialize();
 	pmwcas::PMDKAllocator* allocator = (pmwcas::PMDKAllocator*)pmwcas::Allocator::Get();
-	tree = (bztree::BzTree*)allocator->GetRoot(sizeof(bztree::BzTree));
+	bztree = (bztree::BzTree*)allocator->GetRoot(sizeof(bztree::BzTree));
 	allocator->Allocate((void **) &bztree_pool, sizeof(pmwcas::DescriptorPool));
 	new (bztree_pool) pmwcas::DescriptorPool(bztree_descriptor_pool_size, MaxConnections, false);
 	new (bztree) bztree::BzTree(
 		param, bztree_pool, reinterpret_cast<uint64_t>(allocator->GetPool()));
 #else
-	tree = bztree::BzTree::New(opts->param, bztree_pool);
-	tree->SetPMWCASPool(bztree_pool);
-	StoreIndexPointer(index, tree);
+	bztree = bztree::BzTree::New(opts->param, bztree_pool);
+	bztree->SetPMWCASPool(bztree_pool);
+	StoreIndexPointer(index, bztree);
 #endif
-	return tree;
+	return bztree;
 }
 
 //
