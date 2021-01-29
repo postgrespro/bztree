@@ -112,8 +112,8 @@ bztree_initialize(void)
 						pmwcas::LinuxEnvironment::Create,
 						pmwcas::LinuxEnvironment::Destroy);
 	auto allocator = pmwcas::Allocator::Get();
-#endif
 	bztree::Allocator::Init(allocator);
+#endif
 	allocator->Allocate((void **) &bztree_pool, sizeof(pmwcas::DescriptorPool));
 	new(bztree_pool) pmwcas::DescriptorPool(bztree_descriptor_pool_size, MaxConnections, false);
 }
