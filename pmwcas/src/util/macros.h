@@ -16,10 +16,10 @@
 #else
 
 #define DCHECK(...) ;
-#define LOG_ASSERT(...) ;
 #define CHECK_EQ(...) std::cout
 
 #ifdef NDEBUG
+#define LOG_ASSERT(...)
 #define RAW_CHECK(_cond,_msg)
 #ifdef __GNUC__
 #define RAW_CHECK_ONLY __attribute__((unused))
@@ -27,6 +27,7 @@
 #define RAW_CHECK_ONLY
 #endif
 #else
+#define LOG_ASSERT(_cond) assert(_cond)
 #define RAW_CHECK(_cond,_msg) assert(_cond)
 #define RAW_CHECK_ONLY
 #endif

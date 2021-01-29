@@ -319,6 +319,8 @@ class PMDKAllocator : IAllocator {
       PMEMobjpool *tmp_pool;
       if (!FileExists(pool_name)) {
         tmp_pool = pmemobj_create(pool_name, layout_name, pool_size, CREATE_MODE_RW);
+		if (tmp_pool == NULL)
+			perror("pmemobj_create");
         LOG_ASSERT(tmp_pool != nullptr);
       } else {
         tmp_pool = pmemobj_open(pool_name, layout_name);
