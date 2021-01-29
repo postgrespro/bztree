@@ -106,13 +106,13 @@ bztree_initialize(void)
                         pmwcas::LinuxEnvironment::Create,
                         pmwcas::LinuxEnvironment::Destroy);
 	auto allocator = reinterpret_cast<pmwcas::PMDKAllocator *>(pmwcas::Allocator::Get());
+	bztree::Allocator::Init(allocator);
 #else
 	pmwcas::InitLibrary(pmwcas::NumaAllocator::Create,
 						pmwcas::NumaAllocator::Destroy,
 						pmwcas::LinuxEnvironment::Create,
 						pmwcas::LinuxEnvironment::Destroy);
 	auto allocator = pmwcas::Allocator::Get();
-	bztree::Allocator::Init(allocator);
 #endif
 	allocator->Allocate((void **) &bztree_pool, sizeof(pmwcas::DescriptorPool));
 	new(bztree_pool) pmwcas::DescriptorPool(bztree_descriptor_pool_size, MaxConnections, false);
