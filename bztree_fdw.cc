@@ -98,6 +98,27 @@ struct BzTreeHashEntry
 };
 
 static void
+bztree_initialize(void)
+{
+#ifdef PMDK
+	pmwcas::InitLibrary(pmwcas::PMDKAllocator::Create(bztree_pool_name, "layout_bztree", bztree_mem_size),
+                        pmwcas::PMDKAllocator::Destroy,
+                        pmwcas::LinuxEnvironment::Create,
+                        pmwcas::LinuxEnvironment::Destroy);
+	auto allocator = reinterpret_cast<pmwcas::PMDKAllocator *>(pmwcas::Allocator::Get());
+#else
+	pmwcas::InitLibrary(pmwcas::NumaAllocator::Create,
+						pmwcas::NumaAllocator::Destroy,
+						pmwcas::LinuxEnvironment::Create,
+						pmwcas::LinuxEnvironment::Destroy);
+	auto allocator = pmwcas::Allocator::Get();
+#endif
+	bztree::Allocator::Init(allocator);
+	allocator->Allocate((void **) &bztree_pool, sizeof(pmwcas::DescriptorPool));
+	new(bztree_pool) pmwcas::DescriptorPool(bztree_descriptor_pool_size, MaxConnections, false);
+}
+
+static void
 bztree_shmem_startup(void)
 {
 	HASHCTL info;
@@ -114,22 +135,9 @@ bztree_shmem_startup(void)
 								&info,
 								HASH_ELEM | HASH_BLOBS);
 	bztree_hash_lock = &(GetNamedLWLockTranche("bztree"))->lock;
-#ifdef PMDK
-	pmwcas::InitLibrary(pmwcas::PMDKAllocator::Create(bztree_pool_name, "layout_bztree", bztree_mem_size),
-                        pmwcas::PMDKAllocator::Destroy,
-                        pmwcas::LinuxEnvironment::Create,
-                        pmwcas::LinuxEnvironment::Destroy);
-	auto allocator = reinterpret_cast<pmwcas::PMDKAllocator *>(pmwcas::Allocator::Get());
-	bztree::Allocator::Init(allocator);
-#else
-	pmwcas::InitLibrary(pmwcas::NumaAllocator::Create,
-						pmwcas::NumaAllocator::Destroy,
-						pmwcas::LinuxEnvironment::Create,
-						pmwcas::LinuxEnvironment::Destroy);
-	auto allocator = pmwcas::Allocator::Get();
+#ifndef PMDK
+	bztree_initialize();
 #endif
-	allocator->Allocate((void **) &bztree_pool, sizeof(pmwcas::DescriptorPool));
-	new(bztree_pool) pmwcas::DescriptorPool(bztree_descriptor_pool_size, MaxConnections, false);
 }
 
 void _PG_init(void)
@@ -240,6 +248,9 @@ GetIndexPointer(Relation index)
 
 	if (cached_index_oid == RelationGetRelid(index))
 		return cached_tree;
+
+	if (!bztree_pool)
+		bztree_initialize();
 
 	LWLockAcquire(bztree_hash_lock, LW_SHARED);
 	BzTreeHashEntry* entry = (BzTreeHashEntry*)hash_search(bztree_hash, &RelationGetRelid(index), HASH_FIND, NULL);
@@ -358,6 +369,10 @@ BuildBzTree(Relation index)
 	BzTreeOptions* opts = (BzTreeOptions*)index->rd_options;
 	if (opts == NULL)
 		opts = makeDefaultBzTreeOptions();
+
+	if (!bztree_pool)
+		bztree_initialize();
+
 	bztree::BzTree* tree = bztree::BzTree::New(opts->param, bztree_pool);
 	tree->SetPMWCASPool(bztree_pool);
 	StoreIndexPointer(index, tree);
