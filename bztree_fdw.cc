@@ -97,25 +97,25 @@ struct BzTreeHashEntry
 	bztree::BzTree* tree;
 };
 
-static pmwcas::IAllocator*
+static void
 bztree_initialize(void)
 {
-	pmwcas::IAllocator* allocator;
 #ifdef PMDK
 	pmwcas::InitLibrary(pmwcas::PMDKAllocator::Create(bztree_pool_name, "layout_bztree", bztree_mem_size),
                         pmwcas::PMDKAllocator::Destroy,
                         pmwcas::LinuxEnvironment::Create,
                         pmwcas::LinuxEnvironment::Destroy);
-	allocator = pmwcas::Allocator::Get();
+	auto allocator = pmwcas::Allocator::Get();
 	bztree::Allocator::Init(allocator);
 #else
 	pmwcas::InitLibrary(pmwcas::NumaAllocator::Create,
 						pmwcas::NumaAllocator::Destroy,
 						pmwcas::LinuxEnvironment::Create,
 						pmwcas::LinuxEnvironment::Destroy);
-	allocator = pmwcas::Allocator::Get();
+	auto allocator = pmwcas::Allocator::Get();
+	allocator->Allocate((void **) &bztree_pool, sizeof(pmwcas::DescriptorPool));
+	new (bztree_pool) pmwcas::DescriptorPool(bztree_descriptor_pool_size, MaxConnections, false);
 #endif
-	return allocator;
 }
 
 static void
@@ -136,9 +136,7 @@ bztree_shmem_startup(void)
 								HASH_ELEM | HASH_BLOBS);
 	bztree_hash_lock = &(GetNamedLWLockTranche("bztree"))->lock;
 #ifndef PMDK
-	auto allocator = bztree_initialize();
-	allocator->Allocate((void **) &bztree_pool, sizeof(pmwcas::DescriptorPool));
-	new (bztree_pool) pmwcas::DescriptorPool(bztree_descriptor_pool_size, MaxConnections, false);
+	bztree_initialize();
 #endif
 }
 
@@ -254,7 +252,8 @@ GetIndexPointer(Relation index)
 	cached_index_oid = RelationGetRelid(index);
 
 #ifdef PMDK
-	pmwcas::PMDKAllocator* allocator = (pmwcas::PMDKAllocator*)bztree_initialize();
+	bztree_initialize();
+	pmwcas::PMDKAllocator* allocator = (pmwcas::PMDKAllocator*)pmwcas::Allocator::Get();
 	cached_tree = (bztree::BzTree*)allocator->GetRoot(sizeof(bztree::BzTree));
 #else
 	LWLockAcquire(bztree_hash_lock, LW_SHARED);
@@ -377,7 +376,8 @@ BuildBzTree(Relation index)
 
 #ifdef PMDK
 	unlink(bztree_pool_name);
-	pmwcas::PMDKAllocator* allocator = (pmwcas::PMDKAllocator*)bztree_initialize();
+	bztree_initialize();
+	pmwcas::PMDKAllocator* allocator = (pmwcas::PMDKAllocator*)pmwcas::Allocator::Get();
 	tree = (bztree::BzTree*)allocator->GetRoot(sizeof(bztree::BzTree));
 	allocator->Allocate((void **) &bztree_pool, sizeof(pmwcas::DescriptorPool));
 	new (bztree_pool) pmwcas::DescriptorPool(bztree_descriptor_pool_size, MaxConnections, false);
