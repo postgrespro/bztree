@@ -15,7 +15,7 @@ OBJS = ./bztree_fdw.o \
 PGFILEDESC = "bztree - bztree implementation based on PMWCAS"
 
 ifdef USE_PMEM
-PG_CPPFLAGS += -std=c++14 -I./pmwcas -I./pmwcas/include -I./pmwcas/src -DPMDK -DPMEM
+PG_CPPFLAGS += -O0 -std=c++14 -I./pmwcas -I./pmwcas/include -I./pmwcas/src -DPMDK -DPMEM
 SHLIB_LINK   = -lstdc++ -lnuma -lpmemobj
 else
 PG_CPPFLAGS += -std=c++14 -I./pmwcas -I./pmwcas/include -I./pmwcas/src

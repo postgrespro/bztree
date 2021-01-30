@@ -88,7 +88,7 @@
 #include <gtest/gtest_prod.h>
 #endif
 
-#define MAX_ROOT_OBJECTS 128
+#define MAX_PMEM_ROOTS 1024
 
 namespace pmwcas {
 
@@ -434,7 +434,8 @@ struct RootObject
 
 class DescriptorPool {
 public:
-  RootObject roots[MAX_ROOT_OBJECT];
+  size_t n_roots;
+  RootObject root[MAX_PMEM_ROOTS];
 private:
   /// Total number of descriptors in the pool
   uint32_t pool_size_;

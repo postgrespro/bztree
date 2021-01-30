@@ -30,7 +30,8 @@ DescriptorPartition::~DescriptorPartition() {
 
 DescriptorPool::DescriptorPool(
     uint32_t requested_pool_size, uint32_t requested_partition_count, bool enable_stats)
-    : pool_size_(0),
+    : n_roots(0),
+      pool_size_(0),
       desc_per_partition_(0),
       partition_count_(0),
       partition_table_(nullptr),

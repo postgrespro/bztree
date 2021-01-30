@@ -66,8 +66,7 @@ int bztree_descriptor_pool_size;
 int bztree_max_indexes;
 
 static shmem_startup_hook_type  PreviousShmemStartupHook = NULL;
-static HTAB*   bztree_hash;
-static LWLock* bztree_hash_lock;
+static LWLock* bztree_lookup_lock;
 
 /* Kind of relation options for bztree index */
 static relopt_kind bztree_relopt_kind;
@@ -97,6 +96,19 @@ struct BzTreeHashEntry
 	bztree::BzTree* tree;
 };
 
+static pmwcas::DescriptorPool*
+bztree_get_pool()
+{
+	if (!bztree_pool)
+	{
+		pmwcas::InitLibrary(pmwcas::PMDKAllocator::Create(bztree_pool_name, "layout_bztree", bztree_mem_size),
+							pmwcas::PMDKAllocator::Destroy);
+		pmwcas::PMDKAllocator* allocator = (pmwcas::PMDKAllocator*)pmwcas::Allocator::Get();
+		bztree_pool = (pmwcas::DescriptorPool*)allocator->GetRoot(sizeof(pmwcas::DescriptorPool));
+	}
+	return bztree_pool;
+}
+
 static void
 bztree_initialize(void)
 {
@@ -107,6 +119,17 @@ bztree_initialize(void)
                         pmwcas::LinuxEnvironment::Destroy);
 	pmwcas::PMDKAllocator* allocator = (pmwcas::PMDKAllocator*)pmwcas::Allocator::Get();
 	bztree::Allocator::Init(allocator);
+	pmwcas::DescriptorPool* pool = (pmwcas::DescriptorPool*)allocator->GetRoot(sizeof(pmwcas::DescriptorPool));
+	if (pool->GetDescriptor())
+	{
+		pool->Recovery(false);
+		pmwcas::NVRAM::Flush(sizeof(pmwcas::DescriptorPool), pool);
+		bztree::global_epoch += 1;
+	}
+	else
+	{
+		new (pool) pmwcas::DescriptorPool(bztree_descriptor_pool_size, MaxConnections, false);
+	}
 #else
 	pmwcas::InitLibrary(pmwcas::NumaAllocator::Create,
 						pmwcas::NumaAllocator::Destroy,
@@ -121,23 +144,12 @@ bztree_initialize(void)
 static void
 bztree_shmem_startup(void)
 {
-	HASHCTL info;
-
 	if (PreviousShmemStartupHook)
 	{
 		PreviousShmemStartupHook();
     }
-	memset(&info, 0, sizeof(info));
-	info.keysize = sizeof(Oid);
-	info.entrysize = sizeof(BzTreeHashEntry);
-	bztree_hash = ShmemInitHash("bztree hash",
-								bztree_max_indexes, bztree_max_indexes,
-								&info,
-								HASH_ELEM | HASH_BLOBS);
-	bztree_hash_lock = &(GetNamedLWLockTranche("bztree"))->lock;
-#ifndef PMDK
+	bztree_lookup_lock = &(GetNamedLWLockTranche("bztree"))->lock;
 	bztree_initialize();
-#endif
 }
 
 void _PG_init(void)
@@ -212,7 +224,7 @@ void _PG_init(void)
 					  4096, 128, 64*1024,
 					  AccessExclusiveLock);
 
-	RequestAddinShmemSpace(hash_estimate_size(bztree_max_indexes, sizeof(BzTreeHashEntry)) + (MaxConnections+1)*sizeof(pmwcas::NumaAllocator::Slab) + BZTREE_SHMEM_SIZE);
+	RequestAddinShmemSpace((MaxConnections+1)*sizeof(pmwcas::NumaAllocator::Slab) + BZTREE_SHMEM_SIZE);
 	RequestNamedLWLockTranche("bztree", 1);
 
 	PreviousShmemStartupHook = shmem_startup_hook;
@@ -225,19 +237,22 @@ void _PG_fini(void)
 	pmwcas::UninitLibrary();
 }
 
-#ifndef PMDK
 //
 // Store pointer to BzTree in shared memory in reloptions column of pg_class
 //
 static void
 StoreIndexPointer(Relation index, bztree::BzTree* tree)
 {
-	LWLockAcquire(bztree_hash_lock, LW_EXCLUSIVE);
-	BzTreeHashEntry* entry = (BzTreeHashEntry*)hash_search(bztree_hash, &RelationGetRelid(index), HASH_ENTER, NULL);
-	entry->tree = tree;
-	LWLockRelease(bztree_hash_lock);
+	pmwcas::DescriptorPool* pool = bztree_get_pool();
+	LWLockAcquire(bztree_lookup_lock, LW_EXCLUSIVE);
+	int index_no = pool->n_roots;
+	if (index_no+1 >= MAX_PMEM_ROOTS)
+		elog(ERROR, "Too much BzTree indexes: %d", index_no+1);
+	pool->root[index_no].key = RelationGetRelid(index);
+	pool->root[index_no].value = (uint64_t)(size_t)((char*)tree - (char*)pool);
+	pool->n_roots = index_no+1;
+	LWLockRelease(bztree_lookup_lock);
 }
-#endif
 
 //
 // Extract pointer to BzTree from reloptions column of pg_class
@@ -245,26 +260,38 @@ StoreIndexPointer(Relation index, bztree::BzTree* tree)
 static bztree::BzTree*
 GetIndexPointer(Relation index)
 {
-	static bztree::BzTree* cached_tree;
-	static Oid cached_index_oid;
-
-	if (cached_index_oid == RelationGetRelid(index))
-		return cached_tree;
-
-	cached_index_oid = RelationGetRelid(index);
-
-#ifdef PMDK
-	bztree_initialize();
-	pmwcas::PMDKAllocator* allocator = (pmwcas::PMDKAllocator*)pmwcas::Allocator::Get();
-	cached_tree = (bztree::BzTree*)allocator->GetRoot(sizeof(bztree::BzTree));
-#else
-	LWLockAcquire(bztree_hash_lock, LW_SHARED);
-	BzTreeHashEntry* entry = (BzTreeHashEntry*)hash_search(bztree_hash, &RelationGetRelid(index), HASH_FIND, NULL);
-	assert(entry != NULL);
-	cached_tree = entry->tree;
-	LWLockRelease(bztree_hash_lock);
-#endif
-	return cached_tree;
+	static HTAB* bztree_hash;
+	Oid relid = RelationGetRelid(index);
+	if (bztree_hash)
+	{
+		BzTreeHashEntry* entry = (BzTreeHashEntry*)hash_search(bztree_hash, &relid, HASH_FIND, NULL);
+		if (entry != NULL)
+			return entry->tree;
+	}
+	else
+	{
+		HASHCTL info;
+		memset(&info, 0, sizeof(info));
+		info.keysize = sizeof(Oid);
+		info.entrysize = sizeof(BzTreeHashEntry);
+		bztree_hash = hash_create("bztree", MAX_PMEM_ROOTS, &info, HASH_ELEM|HASH_BLOBS);
+	}
+	pmwcas::DescriptorPool* pool = bztree_get_pool();
+	LWLockAcquire(bztree_lookup_lock, LW_SHARED);
+	for (size_t i = 0; i < pool->n_roots; i++)
+	{
+		if (pool->root[i].key == relid)
+		{
+			bztree::BzTree* bztree = (bztree::BzTree*)((char*)pool + pool->root[i].value);
+			BzTreeHashEntry* entry = (BzTreeHashEntry*)hash_search(bztree_hash, &relid, HASH_ENTER, NULL);
+			entry->tree = bztree;
+			LWLockRelease(bztree_lookup_lock);
+			return bztree;
+		}
+	}
+	LWLockRelease(bztree_lookup_lock);
+	elog(ERROR, "BzTree index %d not found", relid);
+	return NULL;
 }
 
 static Datum
@@ -371,25 +398,14 @@ bztreeBuildCallback(Relation index,
 static bztree::BzTree*
 BuildBzTree(Relation index)
 {
-	bztree::BzTree* bztree;
 	BzTreeOptions* opts = (BzTreeOptions*)index->rd_options;
 	if (opts == NULL)
 		opts = makeDefaultBzTreeOptions();
 
-#ifdef PMDK
-	unlink(bztree_pool_name);
-	bztree_initialize();
-	pmwcas::PMDKAllocator* allocator = (pmwcas::PMDKAllocator*)pmwcas::Allocator::Get();
-	bztree = (bztree::BzTree*)allocator->GetRoot(sizeof(bztree::BzTree));
-	allocator->Allocate((void **) &bztree_pool, sizeof(pmwcas::DescriptorPool));
-	new (bztree_pool) pmwcas::DescriptorPool(bztree_descriptor_pool_size, MaxConnections, false);
-	new (bztree) bztree::BzTree(
-		opts->param, bztree_pool, reinterpret_cast<uint64_t>(allocator->GetPool()));
-#else
-	bztree = bztree::BzTree::New(opts->param, bztree_pool);
-	bztree->SetPMWCASPool(bztree_pool);
+	pmwcas::DescriptorPool* pool = bztree_get_pool();
+	bztree::BzTree* bztree = bztree::BzTree::New(opts->param, pool);
+	bztree->SetPMWCASPool(pool);
 	StoreIndexPointer(index, bztree);
-#endif
 	return bztree;
 }
 
