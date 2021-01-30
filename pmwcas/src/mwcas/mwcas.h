@@ -88,6 +88,8 @@
 #include <gtest/gtest_prod.h>
 #endif
 
+#define MAX_ROOT_OBJECTS 128
+
 namespace pmwcas {
 
 // Forward references
@@ -423,7 +425,16 @@ struct alignas(kCacheLineSize)DescriptorPartition {
   uint32_t allocated_desc;
 };
 
+struct RootObject
+{
+	uint64_t key;
+	uint64_t value;
+	RootObject() : key(0), value(0) {}
+};
+
 class DescriptorPool {
+public:
+  RootObject roots[MAX_ROOT_OBJECT];
 private:
   /// Total number of descriptors in the pool
   uint32_t pool_size_;
