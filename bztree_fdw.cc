@@ -63,7 +63,6 @@ static pmwcas::DescriptorPool* bztree_pool;
 int bztree_mem_size;
 char* bztree_pool_name;
 int bztree_descriptor_pool_size;
-int bztree_max_indexes;
 
 static shmem_startup_hook_type  PreviousShmemStartupHook = NULL;
 static LWLock* bztree_lookup_lock;
@@ -99,13 +98,16 @@ struct BzTreeHashEntry
 static pmwcas::DescriptorPool*
 bztree_get_pool()
 {
+#ifdef PMDK
 	if (!bztree_pool)
 	{
 		pmwcas::InitLibrary(pmwcas::PMDKAllocator::Create(bztree_pool_name, "layout_bztree", bztree_mem_size),
 							pmwcas::PMDKAllocator::Destroy);
 		pmwcas::PMDKAllocator* allocator = (pmwcas::PMDKAllocator*)pmwcas::Allocator::Get();
+		bztree::Allocator::Init(allocator);
 		bztree_pool = (pmwcas::DescriptorPool*)allocator->GetRoot(sizeof(pmwcas::DescriptorPool));
 	}
+#endif
 	return bztree_pool;
 }
 
@@ -120,11 +122,11 @@ bztree_initialize(void)
 	pmwcas::PMDKAllocator* allocator = (pmwcas::PMDKAllocator*)pmwcas::Allocator::Get();
 	bztree::Allocator::Init(allocator);
 	pmwcas::DescriptorPool* pool = (pmwcas::DescriptorPool*)allocator->GetRoot(sizeof(pmwcas::DescriptorPool));
-	if (pool->GetDescriptor())
+	if (pool->GetDescriptor()) // already initialized
 	{
 		pool->Recovery(false);
-		pmwcas::NVRAM::Flush(sizeof(pmwcas::DescriptorPool), pool);
 		bztree::global_epoch += 1;
+		pmwcas::NVRAM::Flush(sizeof(pmwcas::DescriptorPool), pool);
 	}
 	else
 	{
@@ -194,19 +196,6 @@ void _PG_init(void)
 							NULL,
 							NULL);
 
-	DefineCustomIntVariable("bztree.max_indexes",
-                            "Maximal numbe of bztree indexes.",
-							NULL,
-							&bztree_max_indexes,
-							1024,
-							1,
-							INT_MAX,
-							PGC_POSTMASTER,
-							0,
-							NULL,
-							NULL,
-							NULL);
-
 	bztree_relopt_kind = add_reloption_kind();
 
 	add_int_reloption(bztree_relopt_kind, "split_threshold",
@@ -223,8 +212,11 @@ void _PG_init(void)
 					  "BzTree leaf node size",
 					  4096, 128, 64*1024,
 					  AccessExclusiveLock);
-
+#ifdef PMDK
+	RequestAddinShmemSpace(BZTREE_SHMEM_SIZE);
+#else
 	RequestAddinShmemSpace((MaxConnections+1)*sizeof(pmwcas::NumaAllocator::Slab) + BZTREE_SHMEM_SIZE);
+#endif
 	RequestNamedLWLockTranche("bztree", 1);
 
 	PreviousShmemStartupHook = shmem_startup_hook;
@@ -252,6 +244,9 @@ StoreIndexPointer(Relation index, bztree::BzTree* tree)
 	pool->root[index_no].value = (uint64_t)(size_t)((char*)tree - (char*)pool);
 	pool->n_roots = index_no+1;
 	LWLockRelease(bztree_lookup_lock);
+#ifdef PMDK
+	pmwcas::NVRAM::Flush(sizeof(pmwcas::DescriptorPool), pool);
+#endif
 }
 
 //
