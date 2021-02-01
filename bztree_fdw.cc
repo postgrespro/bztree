@@ -132,6 +132,8 @@ bztree_initialize(void)
 	{
 		new (pool) pmwcas::DescriptorPool(bztree_descriptor_pool_size, MaxConnections, false);
 	}
+	// Destory alloator in postmaster
+	pmwcas::Allocator::Uninitialize();
 #else
 	pmwcas::InitLibrary(pmwcas::NumaAllocator::Create,
 						pmwcas::NumaAllocator::Destroy,
