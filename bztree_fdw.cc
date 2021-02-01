@@ -393,7 +393,7 @@ bztreeBuildCallback(Relation index,
 static bztree::BzTree*
 BuildBzTree(Relation index)
 {
-	bztree::BzTree* bztree;
+	bztree::BzTree* bztree = nullptr;
 	BzTreeOptions* opts = (BzTreeOptions*)index->rd_options;
 	if (opts == NULL)
 		opts = makeDefaultBzTreeOptions();
