@@ -122,7 +122,7 @@ bztree_initialize(void)
 	pmwcas::PMDKAllocator* allocator = (pmwcas::PMDKAllocator*)pmwcas::Allocator::Get();
 	bztree::Allocator::Init(allocator);
 	pmwcas::DescriptorPool* pool = (pmwcas::DescriptorPool*)allocator->GetRoot(sizeof(pmwcas::DescriptorPool));
-	if (!pool->IsIntialized())
+	if (pool->IsInitialized())
 	{
 		pool->Recovery(false);
 		bztree::global_epoch += 1;
