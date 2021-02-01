@@ -111,7 +111,7 @@ void DescriptorPool::Recovery(bool enable_stats) {
   // begin recovery process
   // If it is an existing pool, see if it has anything in it
   uint64_t in_progress_desc = 0, redo_words = 0, undo_words = 0;
-  Descrptor* descriptors = GetDescriptors();
+  Descriptor* descriptors = GetDescriptors();
   if (descriptors[0].status_ != Descriptor::kStatusInvalid) {
 
     // Must not be a new pool which comes with everything zeroed
