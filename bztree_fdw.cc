@@ -393,12 +393,21 @@ bztreeBuildCallback(Relation index,
 static bztree::BzTree*
 BuildBzTree(Relation index)
 {
+	bztree::BzTree* bztree;
 	BzTreeOptions* opts = (BzTreeOptions*)index->rd_options;
 	if (opts == NULL)
 		opts = makeDefaultBzTreeOptions();
 
 	pmwcas::DescriptorPool* pool = bztree_get_pool();
+	#ifdef PMDK
+	auto pmdk_allocator =
+      reinterpret_cast<pmwcas::PMDKAllocator *>(pmwcas::Allocator::Get());
+	pmdk_allocator->Allocate((void **)&bztree, sizeof(bztree::BzTree));
+	new (bztree) bztree::BzTree(
+		opts->param, pool, reinterpret_cast<uint64_t>(pmdk_allocator->GetPool()));
+	#else
 	bztree::BzTree* bztree = bztree::BzTree::New(opts->param, pool);
+	#endif
 	bztree->SetPMWCASPool(pool);
 	StoreIndexPointer(index, bztree);
 	return bztree;

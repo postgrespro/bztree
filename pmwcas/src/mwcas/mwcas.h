@@ -88,7 +88,7 @@
 #include <gtest/gtest_prod.h>
 #endif
 
-#define MAX_PMEM_ROOTS 1024
+#define MAX_PMEM_ROOTS 128
 
 namespace pmwcas {
 
