@@ -131,6 +131,7 @@ bztree_initialize(void)
 	else
 	{
 		new (pool) pmwcas::DescriptorPool(bztree_descriptor_pool_size, MaxConnections, false);
+		allocator->PersistPtr(pool, sizeof(pmwcas::DescriptorPool));
 	}
 	// Destory alloator in postmaster
 	pmwcas::Allocator::Uninitialize();
@@ -407,10 +408,10 @@ BuildBzTree(Relation index)
 	pmdk_allocator->Allocate((void **)&bztree, sizeof(bztree::BzTree));
 	new (bztree) bztree::BzTree(
 		opts->param, pool, reinterpret_cast<uint64_t>(pmdk_allocator->GetPool()));
+	pmdk_allocator->PersistPtr(bztree, sizeof(bztree::BzTree));
 	#else
 	bztree::BzTree* bztree = bztree::BzTree::New(opts->param, pool);
 	#endif
-	bztree->SetPMWCASPool(pool);
 	StoreIndexPointer(index, bztree);
 	return bztree;
 }
