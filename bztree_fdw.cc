@@ -122,7 +122,7 @@ bztree_initialize(void)
 	pmwcas::PMDKAllocator* allocator = (pmwcas::PMDKAllocator*)pmwcas::Allocator::Get();
 	bztree::Allocator::Init(allocator);
 	pmwcas::DescriptorPool* pool = (pmwcas::DescriptorPool*)allocator->GetRoot(sizeof(pmwcas::DescriptorPool));
-	if (pool->GetDescriptor()) // already initialized
+	if (!pool->IsIntialized())
 	{
 		pool->Recovery(false);
 		bztree::global_epoch += 1;
@@ -244,7 +244,7 @@ StoreIndexPointer(Relation index, bztree::BzTree* tree)
 	if (index_no+1 >= MAX_PMEM_ROOTS)
 		elog(ERROR, "Too much BzTree indexes: %d", index_no+1);
 	pool->root[index_no].key = RelationGetRelid(index);
-	pool->root[index_no].value = (uint64_t)(size_t)((char*)tree - (char*)pool);
+	pool->root[index_no].value = (uint32_t)(size_t)((char*)tree - (char*)pool);
 	pool->n_roots = index_no+1;
 	LWLockRelease(bztree_lookup_lock);
 #ifdef PMDK
@@ -396,21 +396,16 @@ bztreeBuildCallback(Relation index,
 static bztree::BzTree*
 BuildBzTree(Relation index)
 {
-	bztree::BzTree* bztree = nullptr;
 	BzTreeOptions* opts = (BzTreeOptions*)index->rd_options;
 	if (opts == NULL)
 		opts = makeDefaultBzTreeOptions();
 
 	pmwcas::DescriptorPool* pool = bztree_get_pool();
+	bztree::BzTree* bztree = bztree::BzTree::New(opts->param, pool);
 	#ifdef PMDK
 	auto pmdk_allocator =
-      reinterpret_cast<pmwcas::PMDKAllocator *>(pmwcas::Allocator::Get());
-	pmdk_allocator->Allocate((void **)&bztree, sizeof(bztree::BzTree));
-	new (bztree) bztree::BzTree(
-		opts->param, pool, reinterpret_cast<uint64_t>(pmdk_allocator->GetPool()));
+		reinterpret_cast<pmwcas::PMDKAllocator *>(pmwcas::Allocator::Get());
 	pmdk_allocator->PersistPtr(bztree, sizeof(bztree::BzTree));
-	#else
-	bztree::BzTree* bztree = bztree::BzTree::New(opts->param, pool);
 	#endif
 	StoreIndexPointer(index, bztree);
 	return bztree;

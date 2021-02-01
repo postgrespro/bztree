@@ -13,6 +13,7 @@ namespace pmwcas {
 
 bool MwCASMetrics::enabled = false;
 CoreLocal<MwCASMetrics*> MwCASMetrics::instance;
+DescriptorPartition* DescriptorPool::partition_table_;
 
 DescriptorPartition::DescriptorPartition(EpochManager* epoch,
     DescriptorPool* pool)
@@ -33,10 +34,8 @@ DescriptorPool::DescriptorPool(
     : n_roots(0),
       pool_size_(0),
       desc_per_partition_(0),
-      partition_count_(0),
-      partition_table_(nullptr),
-      next_partition_(0) {
-
+      partition_count_(0)
+{
   MwCASMetrics::enabled = enable_stats;
   if (enable_stats) {
     auto s = MwCASMetrics::Initialize();
@@ -72,16 +71,12 @@ DescriptorPool::DescriptorPool(
   RAW_CHECK(pool_size_ > 0, "invalid pool size");
 
   // Create a new pool
+  void* descriptors = nullptr;
   Allocator::Get()->AllocateAligned(
-      (void **) &descriptors_,
+      &descriptors,
       sizeof(Descriptor) * pool_size_, kCacheLineSize);
-  RAW_CHECK(descriptors_, "out of memory");
-
-#ifdef PMDK
-  // Set the new pmdk_pool addr
-  pmdk_pool_ = (uint64_t) reinterpret_cast<PMDKAllocator*>(Allocator::Get())->GetPool();
-#endif
-
+  RAW_CHECK(descriptors, "out of memory");
+  descriptors_ = (char*)descriptors - (char*)this;
   InitDescriptors();
 }
 
@@ -106,26 +101,22 @@ void DescriptorPool::Recovery(bool enable_stats) {
 
   RAW_CHECK(descriptors_, "invalid descriptor array pointer");
   RAW_CHECK(pool_size_ > 0, "invalid pool size");
-#ifdef PMDK
-  auto new_pmdk_pool = reinterpret_cast<PMDKAllocator *>(Allocator::Get())->GetPool();
-  uint64_t adjust_offset = (uint64_t) new_pmdk_pool - pmdk_pool_;
-  descriptors_ = reinterpret_cast<Descriptor *>((uint64_t) descriptors_ + adjust_offset);
-#else
+
   Metadata *metadata = (Metadata*)((uint64_t)this - sizeof(Metadata));
   RAW_CHECK((uint64_t)metadata->initial_address == (uint64_t)metadata,
             "invalid initial address");
   RAW_CHECK(metadata->descriptor_count == pool_size_,
             "wrong descriptor pool size");
-#endif  // PMEM
 
   // begin recovery process
   // If it is an existing pool, see if it has anything in it
   uint64_t in_progress_desc = 0, redo_words = 0, undo_words = 0;
-  if (descriptors_[0].status_ != Descriptor::kStatusInvalid) {
+  Descrptor* descriptors = GetDescriptors();
+  if (descriptors[0].status_ != Descriptor::kStatusInvalid) {
 
     // Must not be a new pool which comes with everything zeroed
     for (uint32_t i = 0; i < pool_size_; ++i) {
-      auto &desc = descriptors_[i];
+      auto &desc = descriptors[i];
 
       if (desc.status_ == Descriptor::kStatusInvalid) {
         // Must be a new pool - comes with everything zeroed but better
@@ -217,10 +208,6 @@ void DescriptorPool::Recovery(bool enable_stats) {
       }
     }
   }
-#ifdef PMDK
-  // Set the new pmdk_pool addr
-  pmdk_pool_ = (uint64_t) reinterpret_cast<PMDKAllocator *>(Allocator::Get())->GetPool();
-#endif
 
   InitDescriptors();
 }
@@ -230,7 +217,8 @@ void DescriptorPool::InitDescriptors() {
   // (Re-)initialize descriptors. Any recovery business should be done by now,
   // start as a clean slate.
   RAW_CHECK(descriptors_, "null descriptor pool");
-  memset(descriptors_, 0, sizeof(Descriptor) * pool_size_);
+  Descriptor* descriptors = GetDescriptors();
+  memset(descriptors, 0, sizeof(Descriptor) * pool_size_);
 
   // Distribute this many descriptors per partition
   RAW_CHECK(pool_size_ > partition_count_,
@@ -239,7 +227,7 @@ void DescriptorPool::InitDescriptors() {
   for (uint32_t i = 0; i < partition_count_; ++i) {
     DescriptorPartition *p = partition_table_ + i;
     for (uint32_t d = 0; d < desc_per_partition_; ++d) {
-      Descriptor *desc = descriptors_ + i * desc_per_partition_ + d;
+      Descriptor *desc = descriptors + i * desc_per_partition_ + d;
       new (desc) Descriptor(p);
       desc->next_ptr_ = p->free_list;
       p->free_list = desc;

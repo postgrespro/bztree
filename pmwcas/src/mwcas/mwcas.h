@@ -427,14 +427,14 @@ struct alignas(kCacheLineSize)DescriptorPartition {
 
 struct RootObject
 {
-	uint64_t key;
-	uint64_t value;
+	uint32_t key;
+	uint32_t value;
 	RootObject() : key(0), value(0) {}
 };
 
 class DescriptorPool {
 public:
-  size_t n_roots;
+  uint32_t n_roots;
   RootObject root[MAX_PMEM_ROOTS];
 private:
   /// Total number of descriptors in the pool
@@ -444,23 +444,16 @@ private:
   uint32_t desc_per_partition_;
 
   /// Points to all descriptors
-  Descriptor* descriptors_;
+  uint32_t descriptors_;
 
   /// Number of partitions in the partition_table_
   uint32_t partition_count_;
 
   /// Descriptor partitions (per thread)
-  DescriptorPartition* partition_table_;
-
-  /// The next partition to assign (round-robin) for a new thread joining the
-  /// pmwcas library.
-  std::atomic<uint32_t> next_partition_;
+  static DescriptorPartition* partition_table_;
 
   /// Epoch manager controling garbage/access to descriptors.
   EpochManager epoch_;
-
-  /// Track the pmdk pool for recovery purpose
-  uint64_t pmdk_pool_;
 
   void InitDescriptors();
 
@@ -480,8 +473,12 @@ private:
 
   DescriptorPool(uint32_t pool_size, uint32_t partition_count, bool enable_stats = false);
 
-  Descriptor* GetDescriptor(){
-    return descriptors_;
+  Descriptor* GetDescriptors(){
+	  return (Descriptor*)((char*)this + descriptors_);
+  }
+
+  bool IsInitialized() {
+	  return descriptors_ != 0;
   }
 
 #ifdef PMEM
